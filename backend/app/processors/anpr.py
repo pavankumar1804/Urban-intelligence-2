@@ -10,6 +10,7 @@ import os
 import shutil
 import uuid
 import time
+from collections import Counter
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -143,6 +144,84 @@ class ANPRProcessor:
     NUM_CORRECTIONS = {
         "0": "O", "1": "I", "2": "Z", "5": "S", "8": "B", "6": "G"
     }
+
+    @classmethod
+    def _select_ocr_candidate(cls, candidates):
+        """Prefer repeatable, format-valid OCR without altering its confidence."""
+        prepared = []
+        for text, confidence in candidates:
+            normalized = re.sub(r"[^A-Z0-9]", "", str(text).upper())
+            if normalized:
+                prepared.append((normalized, max(0.0, min(1.0, float(confidence)))))
+        if not prepared:
+            return None
+
+        observations = Counter(text for text, _ in prepared)
+        return max(
+            prepared,
+            key=lambda item: (
+                bool(cls.INDIAN_PLATE_REGEX.fullmatch(item[0])),
+                observations[item[0]],
+                6 <= len(item[0]) <= 13,
+                item[1],
+                len(item[0]),
+            ),
+        )
+
+    @staticmethod
+    def _rectify_plate_crop(plate_crop, cv2, np):
+        """Perspective-correct a clearly bounded, skewed plate when possible."""
+        if plate_crop is None or plate_crop.size == 0:
+            return plate_crop
+        gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 40, 130)
+        edges = cv2.morphologyEx(
+            edges, cv2.MORPH_CLOSE, np.ones((7, 7), dtype=np.uint8), iterations=2
+        )
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        crop_area = float(plate_crop.shape[0] * plate_crop.shape[1])
+
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:12]:
+            area_ratio = cv2.contourArea(contour) / crop_area if crop_area else 0.0
+            if not 0.20 <= area_ratio <= 0.90:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            polygon = cv2.approxPolyDP(contour, 0.05 * perimeter, True)
+            if len(polygon) != 4:
+                continue
+
+            points = polygon.reshape(4, 2).astype("float32")
+            point_sum = points.sum(axis=1)
+            point_diff = np.diff(points, axis=1).reshape(-1)
+            ordered = np.array(
+                [
+                    points[np.argmin(point_sum)],
+                    points[np.argmin(point_diff)],
+                    points[np.argmax(point_sum)],
+                    points[np.argmax(point_diff)],
+                ],
+                dtype="float32",
+            )
+            top_left, top_right, bottom_right, bottom_left = ordered
+            width = int(max(np.linalg.norm(bottom_right - bottom_left), np.linalg.norm(top_right - top_left)))
+            height = int(max(np.linalg.norm(top_right - bottom_right), np.linalg.norm(top_left - bottom_left)))
+            if width < 80 or height < 25:
+                continue
+            if height > width:
+                width, height = height, width
+            aspect_ratio = width / max(height, 1)
+            if not 1.4 <= aspect_ratio <= 6.0:
+                continue
+
+            destination = np.array(
+                [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+                dtype="float32",
+            )
+            transform = cv2.getPerspectiveTransform(ordered, destination)
+            rectified = cv2.warpPerspective(plate_crop, transform, (width, height))
+            if rectified.size:
+                return rectified
+        return plate_crop
 
     def __init__(self, min_confidence: float = 0.55, model_path: Optional[str] = None):
         self.min_confidence = min_confidence
@@ -326,13 +405,18 @@ class ANPRProcessor:
                 except Exception:
                     timings.setdefault("plate_detection_ms", 0.0)
             crop_started = time.perf_counter()
+            plate_crop = self._rectify_plate_crop(plate_crop, cv2, np)
+            # Tesseract is substantially more reliable after perspective
+            # correction and upscaling of small plate characters.
+            scale = min(3.0, max(1.0, 480.0 / max(plate_crop.shape[0], 1)))
+            if scale > 1.0:
+                plate_crop = cv2.resize(
+                    plate_crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
+                )
             gray = cv2.cvtColor(plate_crop, cv2.COLOR_BGR2GRAY)
-            # Bilateral filter to remove noise while preserving edges
-            denoised = cv2.bilateralFilter(gray, 11, 17, 17)
-            # Adaptive threshold for high contrast plate characters
-            thresh = cv2.adaptiveThreshold(
-                denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-            )
+            denoised = cv2.bilateralFilter(gray, 7, 35, 35)
+            enhanced = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(denoised)
+            _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             timings["crop_enhancement_ms"] = round((time.perf_counter() - crop_started) * 1000, 2)
             # Local fallback when Tesseract happens to be installed.
             try:
@@ -340,15 +424,28 @@ class ANPRProcessor:
                 if self._tesseract_ready:
                     ocr_started = time.perf_counter()
                     tess_candidates = []
-                    for img, psm in ((plate_crop, "--psm 7"), (thresh, "--psm 7"), (gray, "--psm 8"), (thresh, "--psm 8")):
-                        data = pytesseract.image_to_data(img, config=f"{psm} -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", output_type=pytesseract.Output.DICT)
+                    # Do not apply the whitelist to the primary passes. With
+                    # Tesseract 5 it can merge all tokens into one zero-score
+                    # token, even when the characters themselves are correct.
+                    for img, psm in (
+                        (plate_crop, "--psm 6"),
+                        (enhanced, "--psm 6"),
+                        (thresh, "--psm 6"),
+                        (enhanced, "--psm 11"),
+                    ):
+                        data = pytesseract.image_to_data(
+                            img,
+                            config=f"--oem 3 {psm}",
+                            output_type=pytesseract.Output.DICT,
+                        )
                         tokens = [(text.strip(), float(conf)) for text, conf in zip(data["text"], data["conf"]) if text.strip() and float(conf) >= 0]
                         if tokens:
                             text = "".join(t for t, _ in tokens)
                             conf = sum(c for _, c in tokens) / (100 * len(tokens))
                             tess_candidates.append((text, conf))
                     if tess_candidates:
-                        text, confidence = max(tess_candidates, key=lambda item: item[1])
+                        selected = self._select_ocr_candidate(tess_candidates)
+                        text, confidence = selected
                         timings["ocr_ms"] = round((time.perf_counter() - ocr_started) * 1000, 2)
                         timings["validation_ms"] = 0.0
                         timings["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
