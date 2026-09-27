@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { CircleHelp, X } from "lucide-react";
 
 type GuideKind = "road" | "anpr";
@@ -99,7 +100,7 @@ export function UserGuideModal({ kind, onClose }: UserGuideModalProps) {
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       className="user-guide-overlay"
       role="presentation"
@@ -164,6 +165,7 @@ export function UserGuideModal({ kind, onClose }: UserGuideModalProps) {
           <p className="user-guide-note">{content.note}</p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
