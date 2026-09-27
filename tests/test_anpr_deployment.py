@@ -31,7 +31,9 @@ def test_backend_weight_has_priority():
     assert candidates[0].name == "anpr_plate.pt"
     assert candidates[0].parent.name == "weights"
     assert candidates[0].parent.parent.name == "app"
-    assert anpr_service.WEIGHTS == candidates[0]
+    assert anpr_service.WEIGHTS_PT == candidates[0]
+    expected = anpr_service.WEIGHTS_ONNX or anpr_service.WEIGHTS_PT
+    assert anpr_service.WEIGHTS == expected
 
 
 def test_health_check_does_not_load_anpr_model(monkeypatch):
@@ -69,7 +71,9 @@ def test_processor_receives_discovered_trained_weight(monkeypatch):
     assert processor.model is not None
     assert Path(received["model_path"]).resolve() == anpr_service.WEIGHTS.resolve()
     assert health["anpr_model_ready"] is True
-    assert health["anpr_weight"] == "anpr_plate.pt"
+    assert health["anpr_weight"] == anpr_service.WEIGHTS.name
+    expected_engine = "onnxruntime" if anpr_service.WEIGHTS.suffix == ".onnx" else "pytorch"
+    assert health["anpr_engine"] == expected_engine
     assert health["model_cached"] is True
     assert health["anpr_error"] is None
 

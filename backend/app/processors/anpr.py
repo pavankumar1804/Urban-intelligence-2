@@ -19,6 +19,79 @@ from datetime import datetime, timezone
 logger = logging.getLogger("uvicorn.error")
 
 
+class ONNXPlateDetector:
+    """Small YOLO detection wrapper that avoids importing PyTorch at runtime."""
+
+    def __init__(self, model_path: Path, input_size: int):
+        import onnxruntime as ort
+
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = max(1, int(os.getenv("TORCH_NUM_THREADS", "1")))
+        options.inter_op_num_threads = 1
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(
+            str(model_path),
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
+        )
+        self.input_name = self.session.get_inputs()[0].name
+        self.input_size = input_size
+
+    def detect(self, frame, confidence: float = 0.20) -> List[Dict[str, Any]]:
+        import cv2
+        import numpy as np
+
+        height, width = frame.shape[:2]
+        scale = min(self.input_size / width, self.input_size / height)
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        resized = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        pad_x = (self.input_size - resized_width) // 2
+        pad_y = (self.input_size - resized_height) // 2
+        canvas = np.full((self.input_size, self.input_size, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + resized_height, pad_x:pad_x + resized_width] = resized
+        tensor = canvas[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
+        prediction = np.squeeze(self.session.run(None, {self.input_name: tensor[None]})[0])
+        if prediction.ndim != 2:
+            return []
+        # YOLO11 detect exports [channels, anchors]; transpose to one row/anchor.
+        if prediction.shape[0] <= 84 and prediction.shape[0] < prediction.shape[1]:
+            prediction = prediction.T
+        if prediction.shape[1] < 5:
+            return []
+
+        scores = prediction[:, 4:].max(axis=1)
+        selected = np.flatnonzero(scores >= confidence)
+        if not selected.size:
+            return []
+
+        nms_boxes = []
+        selected_scores = []
+        selected_xyxy = []
+        for index in selected:
+            center_x, center_y, box_width, box_height = prediction[index, :4]
+            x1 = float(center_x - box_width / 2)
+            y1 = float(center_y - box_height / 2)
+            nms_boxes.append([int(x1), int(y1), int(box_width), int(box_height)])
+            selected_scores.append(float(scores[index]))
+            selected_xyxy.append([x1, y1, float(center_x + box_width / 2), float(center_y + box_height / 2)])
+
+        kept = cv2.dnn.NMSBoxes(nms_boxes, selected_scores, confidence, 0.45)
+        detections = []
+        for raw_index in np.asarray(kept).reshape(-1):
+            x1, y1, x2, y2 = selected_xyxy[int(raw_index)]
+            detections.append({
+                "confidence": selected_scores[int(raw_index)],
+                "xyxy": [
+                    max(0.0, min(float(width), (x1 - pad_x) / scale)),
+                    max(0.0, min(float(height), (y1 - pad_y) / scale)),
+                    max(0.0, min(float(width), (x2 - pad_x) / scale)),
+                    max(0.0, min(float(height), (y2 - pad_y) / scale)),
+                ],
+            })
+        return sorted(detections, key=lambda item: item["confidence"], reverse=True)
+
+
 def _configure_tesseract(pytesseract) -> bool:
     """Configure common Windows installs when tesseract.exe is absent from PATH."""
     candidates = [
@@ -92,8 +165,11 @@ class ANPRProcessor:
             p = Path(model_path)
             if p.is_file():
                 try:
-                    from ultralytics import YOLO
-                    self.model = YOLO(str(p))
+                    if p.suffix.lower() == ".onnx":
+                        self.model = ONNXPlateDetector(p, self.inference_size)
+                    else:
+                        from ultralytics import YOLO
+                        self.model = YOLO(str(p))
                     logger.info("ANPR YOLO plate detector loaded: %s (%s bytes)", p.resolve(), p.stat().st_size)
                 except Exception as exc:
                     self.model = None
@@ -209,19 +285,25 @@ class ANPRProcessor:
             if self.model is not None:
                 try:
                     detection_started = time.perf_counter()
-                    results = self.model(
-                        frame_crop,
-                        conf=0.20,
-                        verbose=False,
-                        imgsz=self.inference_size,
-                        max_det=10,
-                        device="cpu",
-                    )
+                    if hasattr(self.model, "detect"):
+                        candidates = self.model.detect(frame_crop, confidence=0.20)
+                    else:
+                        results = self.model(
+                            frame_crop,
+                            conf=0.20,
+                            verbose=False,
+                            imgsz=self.inference_size,
+                            max_det=10,
+                            device="cpu",
+                        )
+                        candidates = [
+                            {"confidence": float(box.conf[0]), "xyxy": box.xyxy[0].tolist()}
+                            for result in results for box in result.boxes
+                        ]
                     timings["plate_detection_ms"] = round((time.perf_counter() - detection_started) * 1000, 2)
-                    candidates = [box for result in results for box in result.boxes]
                     if candidates:
-                        best = max(candidates, key=lambda box: float(box.conf[0]))
-                        x1, y1, x2, y2 = [int(value) for value in best.xyxy[0].tolist()]
+                        best = max(candidates, key=lambda item: item["confidence"])
+                        x1, y1, x2, y2 = [int(value) for value in best["xyxy"]]
                         height, width = frame_crop.shape[:2]
                         # Expand box slightly (5%) to avoid cutting off plate borders
                         pad_x = int((x2 - x1) * 0.05)
@@ -230,7 +312,7 @@ class ANPRProcessor:
                         x2, y2 = min(width, x2 + pad_x), min(height, y2 + pad_y)
                         if x2 > x1 and y2 > y1:
                             plate_crop = frame_crop[y1:y2, x1:x2]
-                            detection_confidence = float(best.conf[0])
+                            detection_confidence = float(best["confidence"])
                             plate_bbox = [x1, y1, x2, y2]
                             localizer_status = "localized"
                     else:

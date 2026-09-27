@@ -34,7 +34,7 @@ ANPRProcessor = _mod.ANPRProcessor
 def _weight_candidates(filename: str) -> list[Path]:
     candidates: list[Path] = []
     configured = os.getenv("ANPR_MODEL_PATH", "").strip()
-    if configured:
+    if configured and Path(configured).suffix.lower() == Path(filename).suffix.lower():
         candidates.append(Path(configured).expanduser())
     # Render builds the backend with backend/ as Docker build context, so this
     # backend-local copy must be first. The frontend path remains for local/full-repo runs.
@@ -60,7 +60,9 @@ def _find_weight(filename: str) -> Path | None:
 
 WEIGHTS_PT = _find_weight("anpr_plate.pt")
 WEIGHTS_ONNX = _find_weight("anpr_plate.onnx")
-WEIGHTS = WEIGHTS_PT or WEIGHTS_ONNX
+# Prefer the CPU-efficient ONNX export generated during the Docker build.
+# The original trained PyTorch checkpoint remains the honest fallback.
+WEIGHTS = WEIGHTS_ONNX or WEIGHTS_PT
 _processor = None
 _processor_error = None
 _processor_load_ms = None
@@ -72,10 +74,11 @@ MAX_IMAGE_SIDE = int(os.getenv("ANPR_MAX_IMAGE_SIDE", "1280"))
 
 def _log_weight_diagnostics() -> None:
     logger.info("ANPR Ultralytics available: %s", importlib.util.find_spec("ultralytics") is not None)
-    for candidate in _weight_candidates("anpr_plate.pt"):
-        exists = candidate.is_file()
-        size = candidate.stat().st_size if exists else None
-        logger.info("ANPR model candidate: %s exists=%s size=%s", candidate, exists, size)
+    for filename in ("anpr_plate.onnx", "anpr_plate.pt"):
+        for candidate in _weight_candidates(filename):
+            exists = candidate.is_file()
+            size = candidate.stat().st_size if exists else None
+            logger.info("ANPR model candidate: %s exists=%s size=%s", candidate, exists, size)
 
 
 def get_processor():
@@ -134,6 +137,7 @@ def anpr_model_health():
         "anpr_model_ready": ready,
         "anpr_weight_available": bool(WEIGHTS),
         "anpr_weight": WEIGHTS.name if WEIGHTS else None,
+        "anpr_engine": "onnxruntime" if WEIGHTS and WEIGHTS.suffix == ".onnx" else "pytorch",
         "model_cached": _processor is not None,
         "anpr_error": _processor_error,
         "model_load_ms": _processor_load_ms,

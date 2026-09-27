@@ -38,6 +38,7 @@ torch==2.5.1+cpu; sys_platform == "linux"
 torchvision==0.20.1+cpu; sys_platform == "linux"
 ultralytics==8.3.0
 onnxruntime==1.23.2
+onnx==1.17.0
 
 # OCR (Tesseract runs outside PyTorch and avoids a second neural stack in RAM)
 pytesseract==0.3.13

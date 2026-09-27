@@ -21,6 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend application code
 COPY . .
 
+# Export the unchanged trained checkpoint to a CPU-efficient deployment
+# format. This is conversion only: the learned parameters are not retrained or
+# confidence-adjusted. Runtime ANPR uses ONNX Runtime without loading PyTorch.
+RUN python -c "from pathlib import Path; from ultralytics import YOLO; p=Path('app/weights/anpr_plate.pt'); o=p.with_suffix('.onnx'); YOLO(str(p)).export(format='onnx', imgsz=320, opset=12, simplify=False, dynamic=False) if p.is_file() and not o.is_file() else None"
+
 # Environment defaults
 ENV PYTHONUNBUFFERED=1
 ENV API_HOST=0.0.0.0

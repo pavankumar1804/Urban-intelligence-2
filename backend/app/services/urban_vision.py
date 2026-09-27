@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import importlib.util
 from pathlib import Path
 import threading
 import time
@@ -17,10 +18,20 @@ try:
 except ImportError:  # pragma: no cover - OpenCV is optional in lighter deploys.
     cv2 = None
 
-try:
-    from ultralytics import YOLO
-except ImportError:  # pragma: no cover - optional ML runtime.
-    YOLO = None
+YOLO = None
+
+
+def _ensure_yolo_runtime() -> bool:
+    global YOLO
+    if YOLO is not None:
+        return True
+    try:
+        from ultralytics import YOLO as yolo_class
+
+        YOLO = yolo_class
+        return True
+    except ImportError:
+        return False
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -77,7 +88,7 @@ def _scale_box(decoded: DecodedImage, xyxy: list[float]) -> dict[str, float]:
 
 def _traffic_status() -> dict[str, Any]:
     return {
-        "model_ready": TRAFFIC_MODEL_PATH.exists() or YOLO is not None,
+        "model_ready": TRAFFIC_MODEL_PATH.exists() or importlib.util.find_spec("ultralytics") is not None,
         "weight": TRAFFIC_MODEL_PATH.name if TRAFFIC_MODEL_PATH.exists() else TRAFFIC_RUNTIME_FALLBACK,
         "engine": "pytorch",
         "method": "PRETRAINED COCO YOLO",
@@ -89,7 +100,7 @@ def _traffic_status() -> dict[str, Any]:
 
 def _get_traffic_model():
     global _traffic_model, _traffic_model_name
-    if YOLO is None:
+    if not _ensure_yolo_runtime():
         raise RuntimeError("Ultralytics is not installed")
     if _traffic_model is None:
         if TRAFFIC_MODEL_PATH.exists():
@@ -103,8 +114,10 @@ def _get_traffic_model():
 
 def release_traffic_model() -> None:
     global _traffic_model
+    had_loaded_model = _traffic_model is not None
     _traffic_model = None
-    collect_released_memory()
+    if had_loaded_model:
+        collect_released_memory()
 
 
 def detection_health() -> dict[str, Any]:

@@ -6,6 +6,7 @@ import ctypes
 import gc
 import os
 from pathlib import Path
+import sys
 import threading
 
 
@@ -24,12 +25,11 @@ def serialized_model_operation(function):
 
 def collect_released_memory() -> None:
     gc.collect()
+    torch_module = sys.modules.get("torch")
     try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except (ImportError, RuntimeError):
+        if torch_module is not None and torch_module.cuda.is_available():
+            torch_module.cuda.empty_cache()
+    except RuntimeError:
         pass
     try:
         ctypes.CDLL("libc.so.6").malloc_trim(0)

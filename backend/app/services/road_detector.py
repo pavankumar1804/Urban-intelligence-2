@@ -1,5 +1,6 @@
 from pathlib import Path
 from io import BytesIO
+import importlib.util
 import os
 import threading
 import time
@@ -14,12 +15,24 @@ try:
 except ImportError:  # pragma: no cover - OpenCV is optional in some edge installs.
     cv2 = None
 
-try:
-    import torch
-    from ultralytics import YOLO
-except ImportError:  # Optional: edge nodes normally perform GPU inference.
-    torch = None
-    YOLO = None
+torch = None
+YOLO = None
+
+
+def _ensure_yolo_runtime() -> bool:
+    """Import the heavy PyTorch runtime only when a road scan requests it."""
+    global torch, YOLO
+    if YOLO is not None:
+        return True
+    try:
+        import torch as torch_module
+        from ultralytics import YOLO as yolo_class
+
+        torch = torch_module
+        YOLO = yolo_class
+        return True
+    except ImportError:
+        return False
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -62,7 +75,7 @@ MAX_TILES = int(os.getenv("ROAD_AI_MAX_TILES", "6"))
 def get_model():
     global _model, _model_load_ms, MODEL_PATH, _waterlogging_model
 
-    if YOLO is None:
+    if not _ensure_yolo_runtime():
         raise RuntimeError(
             "Backend AI detection is not installed. Use the edge inference "
             "pipeline, or install the optional ultralytics dependency."
@@ -97,7 +110,7 @@ def get_waterlogging_model():
     """Load the dedicated trained waterlogging segmentation model."""
     global _waterlogging_model, _model, _pretrained_pothole_model
 
-    if YOLO is None:
+    if not _ensure_yolo_runtime():
         return None
 
     if not WATERLOGGING_MODEL_PATH.exists():
@@ -116,7 +129,7 @@ def get_waterlogging_model():
 
 def get_pretrained_pothole_model():
     global _pretrained_pothole_model, _pretrained_pothole_model_path
-    if YOLO is None:
+    if not _ensure_yolo_runtime():
         return None
     if _pretrained_pothole_model is not None:
         return _pretrained_pothole_model
@@ -165,10 +178,14 @@ def warm_road_model():
 
 def release_road_models() -> None:
     global _model, _waterlogging_model, _pretrained_pothole_model
+    had_loaded_model = any(
+        model is not None for model in (_model, _waterlogging_model, _pretrained_pothole_model)
+    )
     _model = None
     _waterlogging_model = None
     _pretrained_pothole_model = None
-    collect_released_memory()
+    if had_loaded_model:
+        collect_released_memory()
 
 
 def _collect_waterlogging_detections(
@@ -650,7 +667,7 @@ def road_model_health():
     return {
         "road_model_ready": MODEL_PATH.exists(),
         "weight": MODEL_PATH.name,
-        "ultralytics_ready": YOLO is not None,
+        "ultralytics_ready": importlib.util.find_spec("ultralytics") is not None,
         "engine": "onnxruntime" if MODEL_PATH.suffix == ".onnx" else "pytorch",
         "inference_size": INFERENCE_SIZE,
         "preprocess_max_side": PREPROCESS_MAX_SIDE,
