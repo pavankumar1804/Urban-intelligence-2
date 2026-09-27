@@ -1,5 +1,6 @@
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from datetime import datetime, timezone
+import time
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
@@ -95,6 +96,7 @@ async def detect_road(
     confidence: float = 0.12,
 ):
     backend_started = datetime.now(timezone.utc)
+    upload_started = time.perf_counter()
     if confidence < 0.01 or confidence > 1.0:
         raise HTTPException(
             status_code=400,
@@ -103,6 +105,7 @@ async def detect_road(
 
     raw = await file.read(MAX_FILE_SIZE + 1)
     await file.close()
+    upload_read_ms = round((time.perf_counter() - upload_started) * 1000, 2)
 
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -132,6 +135,7 @@ async def detect_road(
         "detections": detections,
         "timing": {
             **timing,
+            "upload_read_ms": upload_read_ms,
             "backend_request_ms": round(
                 (datetime.now(timezone.utc) - backend_started).total_seconds() * 1000,
                 2,
@@ -148,14 +152,17 @@ async def detect_road(
 async def detect_anpr(file: UploadFile = File(...)):
     """Prototype ANPR endpoint. Never fabricates a plate when OCR is uncertain."""
     backend_started = datetime.now(timezone.utc)
+    upload_started = time.perf_counter()
     raw = await file.read(MAX_FILE_SIZE + 1)
     await file.close()
+    upload_read_ms = round((time.perf_counter() - upload_started) * 1000, 2)
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(raw) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Image exceeds 5 MB")
     try:
         result = await run_in_threadpool(recognize_plate, raw)
+        result["timing"]["upload_read_ms"] = upload_read_ms
         result["timing"]["backend_request_ms"] = round(
             (datetime.now(timezone.utc) - backend_started).total_seconds() * 1000,
             2,

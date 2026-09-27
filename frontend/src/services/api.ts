@@ -83,20 +83,26 @@ export async function request(path: string, options: RequestInit = {}) {
     if (response.status === 429) {
       throw new Error("AI service is restarting or busy. Wait about one minute, then scan once.");
     }
-    throw new Error(detail || `Request failed (${response.status})`);
+    if (response.status === 502 || response.status === 504) {
+      throw new Error(`Backend gateway timed out (HTTP ${response.status}). The AI service may be restarting.`);
+    }
+    if (response.status === 503) {
+      throw new Error(`AI model unavailable (HTTP 503)${detail ? `: ${detail}` : "."}`);
+    }
+    throw new Error(
+      `Backend returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`,
+    );
   }
   return response;
 }
 
-const wait = (milliseconds: number) =>
-  new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
-
 async function waitForDetectionBackend(): Promise<void> {
-  // Best-effort wake-up only. Never block an upload behind a long health-poll
-  // loop: the detection POST itself is the authoritative readiness check.
+  // Let one cold-start request finish so the upload can reuse a warm service.
+  // This avoids aborting the wake-up and immediately starting another cold
+  // connection with a much larger multipart body.
   try {
-    await fetch(`${API_BASE}/detect/health`, {
-      signal: AbortSignal.timeout(3000),
+    await fetch(`${API_BASE}/health`, {
+      signal: AbortSignal.timeout(20000),
       cache: "no-store",
     });
   } catch {
@@ -819,7 +825,7 @@ export const apiClient = {
         body: formData,
         // Render may cold-start before CPU inference begins. Bound the wait,
         // but leave enough time for one sequential scan and never auto-retry.
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(60000),
       });
     };
 
@@ -834,7 +840,7 @@ export const apiClient = {
     const response = await request("/detect/anpr", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(90000),
     });
     return response.json() as Promise<{
       plate_number: string;
@@ -856,7 +862,7 @@ export const apiClient = {
     const response = await request("/detect/traffic", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(90000),
     });
     return response.json();
   },
@@ -867,7 +873,7 @@ export const apiClient = {
     const response = await request("/detect/infrastructure", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(90000),
     });
     return response.json();
   },
@@ -878,7 +884,7 @@ export const apiClient = {
     const response = await request("/detect/safety", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(180000),
+      signal: AbortSignal.timeout(90000),
     });
     return response.json();
   },

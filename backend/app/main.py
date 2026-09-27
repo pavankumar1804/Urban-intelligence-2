@@ -105,6 +105,13 @@ app = FastAPI(
 )
 
 
+@app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
+async def health():
+    """Allocation-free liveness endpoint; never imports or loads ML models."""
+    return {"status": "ok", "service": "urban-intelligence-api"}
+
+
 # ============================================================
 # CORS
 # ============================================================

@@ -87,8 +87,8 @@ def get_processor():
         started = time.perf_counter()
         _log_weight_diagnostics()
         try:
-            # Never retain the much larger road/traffic detector alongside
-            # ANPR on a memory-constrained service instance.
+            # Keep one feature family resident. Retaining road, waterlogging,
+            # and ANPR sessions together approaches a 512 MB instance limit.
             from .road_detector import release_road_models
             from .urban_vision import release_traffic_model
 
@@ -141,6 +141,7 @@ def anpr_model_health():
         "model_cached": _processor is not None,
         "anpr_error": _processor_error,
         "model_load_ms": _processor_load_ms,
+        "anpr_model_load_ms": _processor_load_ms,
         "ocr_cached": bool(_processor is not None and hasattr(_processor, "_tesseract_ready")),
         "process_rss_mb": current_rss_mb(),
     }

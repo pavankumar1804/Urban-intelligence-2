@@ -8,7 +8,8 @@ import time
 import numpy as np
 from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 
-from .model_runtime import collect_released_memory, serialized_model_operation
+from .model_runtime import collect_released_memory, current_rss_mb, serialized_model_operation
+from .onnx_yolo import ONNXYOLODetector
 
 try:
     import cv2
@@ -38,16 +39,21 @@ def _ensure_yolo_runtime() -> bool:
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PT_MODEL_PATH = Path(__file__).resolve().parents[1] / "weights" / "road_defect_best.pt"
 WATERLOGGING_MODEL_PATH = Path(__file__).resolve().parents[1] / "weights" / "waterlogging_best.pt"
-ONNX_MODEL_PATH = PROJECT_ROOT / "frontend" / "ml" / "weights" / "road_defect_best.onnx"
+ONNX_MODEL_PATH = Path(__file__).resolve().parents[1] / "weights" / "road_defect_best.onnx"
+WATERLOGGING_ONNX_MODEL_PATH = Path(__file__).resolve().parents[1] / "weights" / "waterlogging_best.onnx"
 PRETRAINED_POTHOLE_MODEL_PATHS = [
     PROJECT_ROOT / "frontend" / "ml" / "weights" / "candidates" / "vinothvikas1987_road_distress_yolov8_best.pt",
     PROJECT_ROOT / "frontend" / "ml" / "weights" / "candidates" / "peterhdd_pothole_yolov8_best.pt",
 ]
-# Prefer the validated PyTorch checkpoint in cloud deployment. The current ONNX
-# export is incompatible with Render's ONNX Runtime graph support (Split
-# num_outputs), so ONNX remains opt-in until a compatible export is validated.
-USE_ONNX = os.getenv("ROAD_AI_USE_ONNX", "0").strip().lower() in {"1", "true", "yes"}
+# Prefer the compatible opset-12 ONNX files produced from the unchanged
+# checkpoints during the Docker build. PyTorch remains an honest local fallback.
+USE_ONNX = os.getenv("ROAD_AI_USE_ONNX", "1").strip().lower() in {"1", "true", "yes"}
 MODEL_PATH = ONNX_MODEL_PATH if USE_ONNX and ONNX_MODEL_PATH.exists() else PT_MODEL_PATH
+ACTIVE_WATERLOGGING_MODEL_PATH = (
+    WATERLOGGING_ONNX_MODEL_PATH
+    if USE_ONNX and WATERLOGGING_ONNX_MODEL_PATH.exists()
+    else WATERLOGGING_MODEL_PATH
+)
 
 _model = None
 _waterlogging_model = None
@@ -74,6 +80,13 @@ MAX_TILES = int(os.getenv("ROAD_AI_MAX_TILES", "6"))
 
 def get_model():
     global _model, _model_load_ms, MODEL_PATH, _waterlogging_model
+
+    if MODEL_PATH.suffix == ".onnx":
+        if _model is None:
+            load_started = time.perf_counter()
+            _model = ONNXYOLODetector(MODEL_PATH)
+            _model_load_ms = round((time.perf_counter() - load_started) * 1000, 2)
+        return _model
 
     if not _ensure_yolo_runtime():
         raise RuntimeError(
@@ -110,19 +123,20 @@ def get_waterlogging_model():
     """Load the dedicated trained waterlogging segmentation model."""
     global _waterlogging_model, _model, _pretrained_pothole_model
 
-    if not _ensure_yolo_runtime():
-        return None
-
-    if not WATERLOGGING_MODEL_PATH.exists():
+    if not ACTIVE_WATERLOGGING_MODEL_PATH.exists():
         return None
 
     if _waterlogging_model is None:
-        # Primary/pothole inference is complete before this function runs.
-        # Keep only one YOLO checkpoint resident at a time.
-        _model = None
-        _pretrained_pothole_model = None
-        collect_released_memory()
-        _waterlogging_model = YOLO(str(WATERLOGGING_MODEL_PATH))
+        if ACTIVE_WATERLOGGING_MODEL_PATH.suffix == ".onnx":
+            _waterlogging_model = ONNXYOLODetector(ACTIVE_WATERLOGGING_MODEL_PATH)
+        else:
+            if not _ensure_yolo_runtime():
+                return None
+            # PyTorch fallback keeps one checkpoint resident on very small hosts.
+            _model = None
+            _pretrained_pothole_model = None
+            collect_released_memory()
+            _waterlogging_model = YOLO(str(ACTIVE_WATERLOGGING_MODEL_PATH))
 
     return _waterlogging_model
 
@@ -213,6 +227,24 @@ def _collect_waterlogging_detections(
 
     detections = []
 
+    if isinstance(model, ONNXYOLODetector):
+        for item in results:
+            x1, y1, x2, y2 = item["xyxy"]
+            detections.append({
+                "class_id": item["class_id"],
+                "class_name": item["class_name"],
+                "confidence": round(float(item["confidence"]), 4),
+                "raw_model_confidence": round(float(item["confidence"]), 4),
+                "bbox": {
+                    "x1": round(x1 * scale_x, 2),
+                    "y1": round(y1 * scale_y, 2),
+                    "x2": round(x2 * scale_x, 2),
+                    "y2": round(y2 * scale_y, 2),
+                },
+                "detection_method": "CUSTOM YOLO / WATERLOGGING ONNX",
+            })
+        return detections
+
     for result in results:
         if result.boxes is None:
             continue
@@ -260,7 +292,10 @@ def _collect_road_model_detections(frame, scale_x, scale_y, confidence, imgsz=No
     except Exception:
         if PT_MODEL_PATH.exists() and MODEL_PATH != PT_MODEL_PATH:
             MODEL_PATH = PT_MODEL_PATH
+            if not _ensure_yolo_runtime():
+                raise RuntimeError("PyTorch road-model fallback is unavailable")
             _model = YOLO(str(PT_MODEL_PATH))
+            model = _model
             with _inference_lock:
                 results = _model.predict(
                     source=frame,
@@ -275,6 +310,25 @@ def _collect_road_model_detections(frame, scale_x, scale_y, confidence, imgsz=No
             raise
 
     detections = []
+    if isinstance(model, ONNXYOLODetector):
+        for item in results:
+            score = float(item["confidence"])
+            x1, y1, x2, y2 = item["xyxy"]
+            detections.append({
+                "class_id": item["class_id"],
+                "class_name": item["class_name"],
+                "confidence": round(score, 4),
+                "raw_model_confidence": round(score, 4),
+                "detection_method": "CUSTOM YOLO / TRAINED ONNX MODEL",
+                "bbox": {
+                    "x1": round(x1 * scale_x, 2),
+                    "y1": round(y1 * scale_y, 2),
+                    "x2": round(x2 * scale_x, 2),
+                    "y2": round(y2 * scale_y, 2),
+                },
+            })
+        return detections
+
     for result in results:
         if result.boxes is None:
             continue
@@ -397,6 +451,9 @@ def detect_road_defects(raw: bytes, confidence: float = 0.12):
     from .anpr_service import release_anpr_model
     from .urban_vision import release_traffic_model
 
+    # Keep one feature family resident. Three simultaneous ONNX sessions plus
+    # image workspaces approach a 512 MB instance limit, while switching and
+    # reloading ONNX costs only a small fraction of inference time.
     release_anpr_model()
     release_traffic_model()
     request_started = time.perf_counter()
@@ -518,6 +575,7 @@ def detect_road_defects(raw: bytes, confidence: float = 0.12):
         "waterlogging_ms": round(waterlogging_ms, 2),
         "postprocess_ms": round(postprocess_ms, 2),
         "total_ms": round(total_ms, 2),
+        "process_rss_mb": current_rss_mb(),
     }
     return detections, timing
 
@@ -666,6 +724,9 @@ def road_model_health():
     """Lightweight readiness check that does not load the model into memory."""
     return {
         "road_model_ready": MODEL_PATH.exists(),
+        "road_model_cached": _model is not None,
+        "waterlogging_model_ready": ACTIVE_WATERLOGGING_MODEL_PATH.exists(),
+        "waterlogging_model_cached": _waterlogging_model is not None,
         "weight": MODEL_PATH.name,
         "ultralytics_ready": importlib.util.find_spec("ultralytics") is not None,
         "engine": "onnxruntime" if MODEL_PATH.suffix == ".onnx" else "pytorch",
@@ -673,5 +734,6 @@ def road_model_health():
         "preprocess_max_side": PREPROCESS_MAX_SIDE,
         "device": "cpu",
         "model_load_ms": _model_load_ms,
+        "road_model_load_ms": _model_load_ms,
         "model_warmup_ms": _model_warmup_ms,
     }

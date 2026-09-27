@@ -21,10 +21,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend application code
 COPY . .
 
-# Export the unchanged trained checkpoint to a CPU-efficient deployment
-# format. This is conversion only: the learned parameters are not retrained or
-# confidence-adjusted. Runtime ANPR uses ONNX Runtime without loading PyTorch.
-RUN python -c "from pathlib import Path; from ultralytics import YOLO; p=Path('app/weights/anpr_plate.pt'); o=p.with_suffix('.onnx'); YOLO(str(p)).export(format='onnx', imgsz=320, opset=12, simplify=False, dynamic=False) if p.is_file() and not o.is_file() else None"
+# Export unchanged trained checkpoints to CPU-efficient deployment formats.
+# This is conversion only: learned parameters and confidence outputs are not
+# retrained or modified. Runtime inference uses ONNX Runtime without PyTorch.
+RUN python -c "from pathlib import Path; from ultralytics import YOLO; specs=[('anpr_plate.pt',320),('road_defect_best.pt',512),('waterlogging_best.pt',512)]; [(lambda p,s: YOLO(str(p)).export(format='onnx', imgsz=s, opset=12, simplify=False, dynamic=False) if p.is_file() and not p.with_suffix('.onnx').is_file() else None)(Path('app/weights')/name,size) for name,size in specs]"
 
 # Environment defaults
 ENV PYTHONUNBUFFERED=1
@@ -39,7 +39,7 @@ ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 ENV OPENBLAS_NUM_THREADS=1
 ENV NUMEXPR_NUM_THREADS=1
-ENV ROAD_AI_USE_ONNX=0
+ENV ROAD_AI_USE_ONNX=1
 ENV ROAD_AI_USE_PRETRAINED_POTHOLE=0
 ENV ROAD_AI_TILED=0
 ENV ROAD_AI_IMGSZ=512
