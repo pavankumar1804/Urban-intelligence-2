@@ -143,6 +143,14 @@ def test_loaded_detector_stays_trained_when_ocr_fails(monkeypatch):
     assert response["plate_number"] == "UNKNOWN"
 
 
+def test_valid_tesseract_candidate_wins_without_confidence_inflation():
+    selected = anpr_service.ANPRProcessor._select_ocr_candidate(
+        [("S", 0.91), ("ap29 AN 0074", 0.62), ("AP29ANO074", 0.41)]
+    )
+
+    assert selected == ("AP29AN0074", 0.62)
+
+
 def test_model_unavailable_is_honest(monkeypatch):
     result = SimpleNamespace(
         plate_number="UNKNOWN", raw_ocr_text="", plate_detection_confidence=0.0,
