@@ -151,6 +151,70 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     </Reveal>
     <Reveal><CityScene compact busCount={MOCK_BUSES.length} eventCount={MOCK_EVENTS.length} onExplore={onOpenDashboard}/></Reveal>
     <Reveal>
+      <section className="landing-get-started" aria-labelledby="getting-started-title">
+        <div className="getting-started-heading">
+          <div className="eyebrow">START HERE</div>
+          <h2 id="getting-started-title">New here? Choose what you want to check.</h2>
+          <p>
+            Pick a tool, upload a clear image, run the scan, and review the AI result.
+            Your existing Road Conditions and ANPR scanners are one click away.
+          </p>
+        </div>
+
+        <div className="getting-started-cards">
+          <article className="getting-started-card">
+            <div className="getting-started-icon"><ScanLine size={24} /></div>
+            <div className="getting-started-card-copy">
+              <span className="getting-started-label">ROAD CONDITIONS</span>
+              <h3>Check a road image</h3>
+              <ol>
+                <li>Open Road Conditions.</li>
+                <li>Upload a clear road photo.</li>
+                <li>Run the existing AI scan.</li>
+                <li>Review detected defects and confidence details.</li>
+              </ol>
+              <p className="getting-started-tip">
+                Tip: keep the road surface visible and avoid very dark or blurry images.
+              </p>
+            </div>
+            <button
+              className="btn btn-primary"
+              onClick={() => onOpenDashboard("roads")}
+            >
+              Open Road Conditions <ArrowRight size={16} />
+            </button>
+          </article>
+
+          <article className="getting-started-card">
+            <div className="getting-started-icon"><Camera size={24} /></div>
+            <div className="getting-started-card-copy">
+              <span className="getting-started-label">ANPR</span>
+              <h3>Read a vehicle number plate</h3>
+              <ol>
+                <li>Open Safety &amp; Incidents.</li>
+                <li>Find the Live ANPR scanner.</li>
+                <li>Upload a clear vehicle or plate photo.</li>
+                <li>Review the detected plate and OCR confidence.</li>
+              </ol>
+              <p className="getting-started-tip">
+                Tip: use a close, sharp image with the number plate clearly visible.
+              </p>
+            </div>
+            <button
+              className="btn btn-secondary"
+              onClick={() => onOpenDashboard("incidents")}
+            >
+              Open ANPR Scanner <ArrowRight size={16} />
+            </button>
+          </article>
+        </div>
+
+        <p className="getting-started-note">
+          AI results can be incorrect. Manually verify important road or registration results before taking action.
+        </p>
+      </section>
+    </Reveal>
+    <Reveal>
       <section id="capabilities" className="landing-capabilities">
         <div className="capability-intro">
           <div className="eyebrow">ONE CITY. A CLEARER PICTURE.</div>
