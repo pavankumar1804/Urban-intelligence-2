@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from .model_runtime import (
     collect_released_memory,
@@ -64,6 +64,10 @@ WEIGHTS = WEIGHTS_PT or WEIGHTS_ONNX
 _processor = None
 _processor_error = None
 _processor_load_ms = None
+RELEASE_AFTER_REQUEST = os.getenv("ANPR_RELEASE_AFTER_REQUEST", "0").strip().lower() in {
+    "1", "true", "yes",
+}
+MAX_IMAGE_SIDE = int(os.getenv("ANPR_MAX_IMAGE_SIDE", "1280"))
 
 
 def _log_weight_diagnostics() -> None:
@@ -144,7 +148,9 @@ def recognize_plate(raw: bytes):
     decode_started = request_started
     try:
         with Image.open(BytesIO(raw)) as im:
-            frame = np.array(im.convert("RGB"))[:, :, ::-1].copy()
+            normalized = ImageOps.exif_transpose(im).convert("RGB")
+            normalized.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+            frame = np.array(normalized)[:, :, ::-1].copy()
     except (UnidentifiedImageError, OSError):
         raise ValueError("Invalid image")
 
@@ -162,7 +168,7 @@ def recognize_plate(raw: bytes):
     else:
         status = "no_plate_detected"
 
-    return {
+    response = {
         "plate_number": result.plate_number,
         "raw_ocr_text": result.raw_ocr_text,
         "plate_detection_confidence": result.plate_detection_confidence,
@@ -187,3 +193,9 @@ def recognize_plate(raw: bytes):
             "Trained plate-localizer model is unavailable; OCR result must be manually verified."
         ),
     }
+    if RELEASE_AFTER_REQUEST:
+        release_anpr_model()
+        response["model_released_after_request"] = True
+    else:
+        response["model_released_after_request"] = False
+    return response

@@ -76,6 +76,7 @@ class ANPRProcessor:
         self.model = None
         self._track_cache: Dict[int, Tuple[float, PlateResult, List[str]]] = {}
         self._recognition_interval_seconds = float(os.getenv("ANPR_RECOGNITION_INTERVAL", "1.0"))
+        self.inference_size = max(320, min(640, int(os.getenv("ANPR_IMGSZ", "416"))))
         # EasyOCR creates another PyTorch neural network beside YOLO and can
         # exceed small Render instance limits. It remains opt-in for larger
         # deployments; production uses the lightweight Tesseract stage.
@@ -208,7 +209,14 @@ class ANPRProcessor:
             if self.model is not None:
                 try:
                     detection_started = time.perf_counter()
-                    results = self.model(frame_crop, conf=0.20, verbose=False)
+                    results = self.model(
+                        frame_crop,
+                        conf=0.20,
+                        verbose=False,
+                        imgsz=self.inference_size,
+                        max_det=10,
+                        device="cpu",
+                    )
                     timings["plate_detection_ms"] = round((time.perf_counter() - detection_started) * 1000, 2)
                     candidates = [box for result in results for box in result.boxes]
                     if candidates:

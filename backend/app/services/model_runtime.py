@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from functools import wraps
+import ctypes
 import gc
 import os
 from pathlib import Path
@@ -29,6 +30,10 @@ def collect_released_memory() -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except (ImportError, RuntimeError):
+        pass
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
         pass
 
 
