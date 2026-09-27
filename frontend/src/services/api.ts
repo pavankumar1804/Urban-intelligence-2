@@ -33,6 +33,24 @@ export const logout = () => {
   sessionStorage.removeItem("urban-access-token");
   window.dispatchEvent(new Event("urban-auth-change"));
 };
+
+type TimedRequestInit = RequestInit & { timeoutMs?: number };
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  options: TimedRequestInit = {},
+): Promise<Response> {
+  const { timeoutMs = 10000, signal, ...requestOptions } = options;
+  if (signal) return fetch(input, { ...requestOptions, signal });
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...requestOptions, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
 export function switchMode() {
   const url = new URL(window.location.href);
   url.searchParams.set("mode", DEMO_MODE ? "backend" : "demo");
@@ -53,15 +71,14 @@ export async function login(username: string, password: string) {
   sessionStorage.setItem("urban-access-token", accessToken);
   window.dispatchEvent(new Event("urban-auth-change"));
 }
-export async function request(path: string, options: RequestInit = {}) {
+export async function request(path: string, options: TimedRequestInit = {}) {
   const headers = new Headers(options.headers);
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    response = await fetchWithTimeout(`${API_BASE}${path}`, {
       ...options,
       headers,
-      signal: options.signal || AbortSignal.timeout(10000),
     });
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
@@ -101,8 +118,8 @@ async function waitForDetectionBackend(): Promise<void> {
   // This avoids aborting the wake-up and immediately starting another cold
   // connection with a much larger multipart body.
   try {
-    await fetch(`${API_BASE}/health`, {
-      signal: AbortSignal.timeout(20000),
+    await fetchWithTimeout(`${API_BASE}/health`, {
+      timeoutMs: 20000,
       cache: "no-store",
     });
   } catch {
@@ -825,7 +842,7 @@ export const apiClient = {
         body: formData,
         // Render may cold-start before CPU inference begins. Bound the wait,
         // but leave enough time for one sequential scan and never auto-retry.
-        signal: AbortSignal.timeout(60000),
+        timeoutMs: 60000,
       });
     };
 
@@ -840,7 +857,7 @@ export const apiClient = {
     const response = await request("/detect/anpr", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(90000),
+      timeoutMs: 90000,
     });
     return response.json() as Promise<{
       plate_number: string;
@@ -862,7 +879,7 @@ export const apiClient = {
     const response = await request("/detect/traffic", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(90000),
+      timeoutMs: 90000,
     });
     return response.json();
   },
@@ -873,7 +890,7 @@ export const apiClient = {
     const response = await request("/detect/infrastructure", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(90000),
+      timeoutMs: 90000,
     });
     return response.json();
   },
@@ -884,7 +901,7 @@ export const apiClient = {
     const response = await request("/detect/safety", {
       method: "POST",
       body: formData,
-      signal: AbortSignal.timeout(90000),
+      timeoutMs: 90000,
     });
     return response.json();
   },
@@ -955,7 +972,7 @@ export const apiClient = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...scenario, is_simulated: true }),
-      signal: AbortSignal.timeout(10000),
+      timeoutMs: 10000,
     });
     if (!response.ok)
       throw new Error(`Scenario request failed (${response.status})`);
