@@ -1,6 +1,8 @@
 """Focused ANPR deployment/integration tests."""
 from io import BytesIO
 from pathlib import Path
+import builtins
+import sys
 from types import SimpleNamespace
 
 from PIL import Image
@@ -77,6 +79,33 @@ def test_model_load_failure_surfaces_processor_error(monkeypatch):
     assert processor.model is None
     assert health["anpr_model_ready"] is False
     assert health["anpr_error"] == "RuntimeError: incompatible Torch build"
+
+
+def test_no_plate_skips_heavy_ocr_initialization(monkeypatch):
+    import numpy as np
+
+    processor = anpr_service.ANPRProcessor()
+    processor.model = lambda *_args, **_kwargs: [SimpleNamespace(boxes=[])]
+    processor.use_easyocr = True
+    monkeypatch.setitem(sys.modules, "cv2", SimpleNamespace())
+    original_import = builtins.__import__
+
+    def fail_if_easyocr_is_imported(name, *args, **kwargs):
+        if name == "easyocr":
+            raise AssertionError("EasyOCR should not load without a localized plate")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_if_easyocr_is_imported)
+    text, detection_confidence, ocr_confidence, bbox, status, timings = processor._cv_ocr_pipeline(
+        np.zeros((16, 32, 3), dtype=np.uint8)
+    )
+
+    assert text == ""
+    assert detection_confidence == 0.0
+    assert ocr_confidence == 0.0
+    assert bbox is None
+    assert status == "no_plate_detected"
+    assert timings["ocr_ms"] == 0.0
 
 
 def test_loaded_detector_stays_trained_when_ocr_fails(monkeypatch):

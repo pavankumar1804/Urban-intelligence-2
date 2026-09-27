@@ -223,6 +223,14 @@ class ANPRProcessor:
                             detection_confidence = float(best.conf[0])
                             plate_bbox = [x1, y1, x2, y2]
                             localizer_status = "localized"
+                    else:
+                        # Do not initialize a second neural network (EasyOCR) or
+                        # OCR an entire vehicle/scene when the trained localizer
+                        # found no plate. This keeps negative scans lightweight.
+                        timings["ocr_ms"] = 0.0
+                        timings["validation_ms"] = 0.0
+                        timings["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
+                        return "", 0.0, 0.0, None, "no_plate_detected", timings
                 except Exception:
                     timings.setdefault("plate_detection_ms", 0.0)
             crop_started = time.perf_counter()
