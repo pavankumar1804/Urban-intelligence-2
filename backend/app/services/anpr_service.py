@@ -79,8 +79,9 @@ def get_processor():
                 _processor_error = None
                 logger.info("ANPR trained plate detector loaded successfully: %s", WEIGHTS.name)
             elif WEIGHTS:
-                _processor_error = f"ANPR processor could not load {WEIGHTS.name}"
-                logger.error("%s (resolved path: %s)", _processor_error, WEIGHTS)
+                detail = getattr(_processor, "model_load_error", None)
+                _processor_error = detail or f"ANPR processor could not load {WEIGHTS.name}"
+                logger.error("ANPR processor could not load model: path=%s reason=%s", WEIGHTS, _processor_error)
             else:
                 _processor_error = "ANPR weight was not found in the deployed filesystem"
                 logger.error("%s", _processor_error)

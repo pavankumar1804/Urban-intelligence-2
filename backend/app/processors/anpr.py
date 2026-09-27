@@ -10,10 +10,13 @@ import os
 import shutil
 import uuid
 import time
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def _configure_tesseract(pytesseract) -> bool:
@@ -75,6 +78,7 @@ class ANPRProcessor:
         self._recognition_interval_seconds = float(os.getenv("ANPR_RECOGNITION_INTERVAL", "1.0"))
         self.use_easyocr = os.getenv("ANPR_USE_EASYOCR", "0").strip().lower() in {"1", "true", "yes"}
         self._tesseract_ready = False
+        self.model_load_error = None
         try:
             import pytesseract
             self._tesseract_ready = _configure_tesseract(pytesseract)
@@ -87,8 +91,17 @@ class ANPRProcessor:
                     from ultralytics import YOLO
                     self.model = YOLO(str(p))
                     self.use_easyocr = os.getenv("ANPR_USE_EASYOCR", "1").strip().lower() not in {"0", "false", "no"}
-                except Exception:
+                    logger.info("ANPR YOLO plate detector loaded: %s (%s bytes)", p.resolve(), p.stat().st_size)
+                except Exception as exc:
                     self.model = None
+                    self.model_load_error = f"{type(exc).__name__}: {exc}"
+                    logger.exception(
+                        "ANPR YOLO plate detector failed to load: path=%s exists=%s size=%s",
+                        p.resolve(), p.is_file(), p.stat().st_size if p.is_file() else None,
+                    )
+            else:
+                self.model_load_error = f"Model file does not exist: {p.resolve()}"
+                logger.error("ANPR YOLO plate detector file missing: %s", p.resolve())
 
     def process_vehicle_crop(
         self,

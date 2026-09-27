@@ -29,6 +29,54 @@ def test_backend_weight_has_priority():
     assert candidates[0].name == "anpr_plate.pt"
     assert candidates[0].parent.name == "weights"
     assert candidates[0].parent.parent.name == "app"
+    assert anpr_service.WEIGHTS == candidates[0]
+
+
+def test_processor_receives_discovered_trained_weight(monkeypatch):
+    received = {}
+
+    class LoadedProcessor:
+        model = object()
+        model_load_error = None
+
+        def __init__(self, model_path=None):
+            received["model_path"] = model_path
+
+    monkeypatch.setattr(anpr_service, "ANPRProcessor", LoadedProcessor)
+    monkeypatch.setattr(anpr_service, "_processor", None)
+    monkeypatch.setattr(anpr_service, "_processor_error", None)
+    monkeypatch.setattr(anpr_service, "_processor_load_ms", None)
+
+    processor = anpr_service.get_processor()
+    health = anpr_service.anpr_model_health()
+
+    assert processor.model is not None
+    assert Path(received["model_path"]).resolve() == anpr_service.WEIGHTS.resolve()
+    assert health["anpr_model_ready"] is True
+    assert health["anpr_weight"] == "anpr_plate.pt"
+    assert health["model_cached"] is True
+    assert health["anpr_error"] is None
+
+
+def test_model_load_failure_surfaces_processor_error(monkeypatch):
+    class FailedProcessor:
+        model = None
+        model_load_error = "RuntimeError: incompatible Torch build"
+
+        def __init__(self, model_path=None):
+            pass
+
+    monkeypatch.setattr(anpr_service, "ANPRProcessor", FailedProcessor)
+    monkeypatch.setattr(anpr_service, "_processor", None)
+    monkeypatch.setattr(anpr_service, "_processor_error", None)
+    monkeypatch.setattr(anpr_service, "_processor_load_ms", None)
+
+    processor = anpr_service.get_processor()
+    health = anpr_service.anpr_model_health()
+
+    assert processor.model is None
+    assert health["anpr_model_ready"] is False
+    assert health["anpr_error"] == "RuntimeError: incompatible Torch build"
 
 
 def test_loaded_detector_stays_trained_when_ocr_fails(monkeypatch):
