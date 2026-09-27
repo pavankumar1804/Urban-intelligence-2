@@ -49,7 +49,7 @@ ENV ROAD_AI_POTHOLE_MIN_CONF=0.12
 ENV ANPR_USE_EASYOCR=0
 ENV ANPR_IMGSZ=320
 ENV ANPR_MAX_IMAGE_SIDE=1280
-ENV ANPR_RELEASE_AFTER_REQUEST=1
+# Keep the lightweight ONNX session cached between ANPR scans. The shared\n# model-runtime lock releases it before a road/traffic model is loaded, so only\n# one inference family remains resident on the memory-constrained instance.\nENV ANPR_RELEASE_AFTER_REQUEST=0
 
 EXPOSE 8000
 
