@@ -2793,6 +2793,235 @@ html[data-motion="off"] .landing-feature {
   transform: none !important;
 }
 
+/* Contextual Road Conditions and ANPR user guides. */
+.guide-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.guide-trigger {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+  border-radius: var(--radius-full);
+  background: rgba(37, 99, 235, 0.1);
+  color: #a9cfff;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.guide-trigger:hover {
+  border-color: rgba(96, 165, 250, 0.58);
+  background: rgba(37, 99, 235, 0.18);
+  transform: translateY(-1px);
+}
+
+.guide-trigger:focus-visible,
+.user-guide-close:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 3px;
+}
+
+.user-guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3600;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.user-guide-modal {
+  width: min(640px, 100%);
+  max-height: min(780px, calc(100dvh - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 10% 0, rgba(37, 99, 235, 0.12), transparent 34%),
+    var(--bg-secondary);
+  box-shadow: var(--shadow-xl);
+}
+
+.user-guide-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 22px 18px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.user-guide-title-group {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.user-guide-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-accent);
+  border-radius: 13px;
+  background: var(--accent-muted);
+  font-size: 1.35rem;
+}
+
+.user-guide-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.user-guide-header h2 {
+  margin-top: 4px;
+  font-size: clamp(1.15rem, 3vw, 1.4rem);
+}
+
+.user-guide-close {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.user-guide-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.user-guide-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 22px 24px;
+}
+
+.user-guide-intro {
+  margin-bottom: 18px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+}
+
+.user-guide-steps {
+  display: grid;
+  gap: 10px;
+  padding-left: 30px;
+  color: var(--text-secondary);
+}
+
+.user-guide-steps li {
+  padding-left: 6px;
+  line-height: 1.55;
+}
+
+.user-guide-steps li::marker {
+  color: var(--accent-text);
+  font-weight: 800;
+}
+
+.user-guide-tips {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.user-guide-tips h3 {
+  margin-bottom: 9px;
+  font-size: 0.88rem;
+}
+
+.user-guide-tips ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.user-guide-explanation,
+.user-guide-note {
+  margin-top: 16px;
+  padding: 13px 15px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.user-guide-explanation {
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  background: rgba(37, 99, 235, 0.08);
+  color: #b9d7ff;
+}
+
+.user-guide-note {
+  border: 1px solid rgba(217, 119, 6, 0.25);
+  background: rgba(217, 119, 6, 0.08);
+  color: #f1c98d;
+}
+
+@media (max-width: 520px) {
+  .user-guide-overlay {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .user-guide-modal {
+    max-height: calc(100dvh - 20px);
+    border-radius: 18px;
+  }
+
+  .user-guide-header {
+    padding: 17px 16px 14px;
+  }
+
+  .user-guide-content {
+    padding: 16px 16px 20px;
+  }
+
+  .user-guide-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    font-size: 1.1rem;
+  }
+
+  .guide-actions {
+    width: 100%;
+  }
+}
+
 /* Automatic lighter mode for touch and lower-power devices. */
 html[data-fx="balanced"] .overview::before {
   display: none;

@@ -7,6 +7,7 @@ import {
   ImagePlus,
   Loader2,
   MapPin,
+  CircleHelp,
   RefreshCw,
   ScanLine,
   Upload,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../services/api";
+import { UserGuideModal } from "../components/UserGuideModal";
 import type {
   MaintenanceItem,
   RoadDetectionResult,
@@ -40,6 +42,7 @@ export const RoadView = ({
   const [result, setResult] = useState<RoadDetectionResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   const imageRef = useRef<HTMLImageElement | null>(null);
 
@@ -220,26 +223,41 @@ export const RoadView = ({
             </p>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "7px",
-              padding: "8px 12px",
-              borderRadius: "999px",
-              border: "1px solid rgba(94, 234, 212, 0.28)",
-              background: "rgba(94, 234, 212, 0.08)",
-              color: "#78f0d2",
-              fontSize: "0.7rem",
-              fontWeight: 800,
-            }}
-          >
-            <BrainCircuit size={15} />
-            REAL AI CONNECTED
+          <div className="guide-actions">
+            <button
+              type="button"
+              className="guide-trigger"
+              onClick={() => setShowGuide(true)}
+              aria-haspopup="dialog"
+            >
+              <CircleHelp size={16} />
+              How to use
+            </button>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                padding: "8px 12px",
+                borderRadius: "999px",
+                border: "1px solid rgba(94, 234, 212, 0.28)",
+                background: "rgba(94, 234, 212, 0.08)",
+                color: "#78f0d2",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+              }}
+            >
+              <BrainCircuit size={15} />
+              REAL AI CONNECTED
+            </div>
           </div>
         </div>
 
       </div>
+
+      {showGuide && (
+        <UserGuideModal kind="road" onClose={() => setShowGuide(false)} />
+      )}
 
       {/* AI ROAD SCANNER */}
       <section
