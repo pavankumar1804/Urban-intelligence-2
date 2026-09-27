@@ -58,7 +58,7 @@ def test_models_load_in_ultralytics():
             [
                 "python", "-c",
                 "from ultralytics import YOLO;"
-                "m1 = YOLO('frontend/ml/weights/road_defect_best.pt'); assert len(m1.names) == 5;"
+                "m1 = YOLO('frontend/ml/weights/road_defect_best.pt'); assert len(m1.names) == 8;"
                 "m2 = YOLO('frontend/ml/weights/anpr_plate.pt'); assert 0 in m2.names;"
                 "m3 = YOLO('frontend/ml/weights/traffic_coco.pt'); assert 'car' in m3.names.values();"
                 "print('OK')"
@@ -73,7 +73,7 @@ def test_models_load_in_ultralytics():
 
     # Direct import path when ultralytics is in current venv
     m_road = YOLO(str(WEIGHTS_DIR / "road_defect_best.pt"))
-    assert len(m_road.names) == 5
+    assert len(m_road.names) == 8
 
     m_plate = YOLO(str(WEIGHTS_DIR / "anpr_plate.pt"))
     assert 0 in m_plate.names
@@ -133,3 +133,5 @@ def test_dataset_directories_scaffolded():
             for split in ["train", "val", "test"]:
                 dir_path = datasets_root / target / folder / split
                 assert dir_path.is_dir(), f"Missing directory: {dir_path}"
+
+
