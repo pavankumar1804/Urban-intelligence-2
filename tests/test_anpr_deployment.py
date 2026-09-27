@@ -34,6 +34,20 @@ def test_backend_weight_has_priority():
     assert anpr_service.WEIGHTS == candidates[0]
 
 
+def test_health_check_does_not_load_anpr_model(monkeypatch):
+    def must_not_initialize(*args, **kwargs):
+        raise AssertionError("health check must remain allocation-free")
+
+    monkeypatch.setattr(anpr_service, "_processor", None)
+    monkeypatch.setattr(anpr_service, "ANPRProcessor", must_not_initialize)
+
+    health = anpr_service.anpr_model_health()
+
+    assert health["anpr_weight_available"] is True
+    assert health["anpr_model_ready"] is False
+    assert health["model_cached"] is False
+
+
 def test_processor_receives_discovered_trained_weight(monkeypatch):
     received = {}
 

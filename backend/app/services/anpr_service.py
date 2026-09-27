@@ -11,6 +11,12 @@ import time
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+from .model_runtime import (
+    collect_released_memory,
+    current_rss_mb,
+    serialized_model_operation,
+)
+
 logger = logging.getLogger("uvicorn.error")
 SERVICE_FILE = Path(__file__).resolve()
 APP_ROOT = SERVICE_FILE.parents[1]
@@ -74,6 +80,13 @@ def get_processor():
         started = time.perf_counter()
         _log_weight_diagnostics()
         try:
+            # Never retain the much larger road/traffic detector alongside
+            # ANPR on a memory-constrained service instance.
+            from .road_detector import release_road_models
+            from .urban_vision import release_traffic_model
+
+            release_road_models()
+            release_traffic_model()
             _processor = ANPRProcessor(model_path=str(WEIGHTS) if WEIGHTS else None)
             if WEIGHTS and _processor.model is not None:
                 _processor_error = None
@@ -98,19 +111,34 @@ def warm_anpr_model():
     return get_processor()
 
 
+def release_anpr_model() -> None:
+    global _processor
+    if _processor is None:
+        return
+    if hasattr(_processor, "_easyocr_reader"):
+        _processor._easyocr_reader = None
+    _processor.model = None
+    _processor = None
+    collect_released_memory()
+
+
 def anpr_model_health():
-    processor = get_processor()
-    ready = bool(WEIGHTS and processor.model is not None)
+    # Health checks must never allocate a YOLO/OCR model. The frontend calls
+    # this before every upload, and loading here previously caused Render OOMs.
+    ready = bool(WEIGHTS and _processor is not None and _processor.model is not None)
     return {
         "anpr_model_ready": ready,
+        "anpr_weight_available": bool(WEIGHTS),
         "anpr_weight": WEIGHTS.name if WEIGHTS else None,
         "model_cached": _processor is not None,
         "anpr_error": _processor_error,
         "model_load_ms": _processor_load_ms,
         "ocr_cached": bool(_processor is not None and hasattr(_processor, "_tesseract_ready")),
+        "process_rss_mb": current_rss_mb(),
     }
 
 
+@serialized_model_operation
 def recognize_plate(raw: bytes):
     request_started = time.perf_counter()
     decode_started = request_started

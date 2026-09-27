@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgl1 \
     libglib2.0-0 \
+    tesseract-ocr \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,6 +41,7 @@ ENV ROAD_AI_IMGSZ=512
 ENV ROAD_AI_MAX_SIDE=768
 ENV ROAD_AI_NMS_IOU=0.60
 ENV ROAD_AI_POTHOLE_MIN_CONF=0.12
+ENV ANPR_USE_EASYOCR=0
 
 EXPOSE 8000
 

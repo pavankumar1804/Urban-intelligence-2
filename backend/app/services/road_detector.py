@@ -7,6 +7,8 @@ import time
 import numpy as np
 from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 
+from .model_runtime import collect_released_memory, serialized_model_operation
+
 try:
     import cv2
 except ImportError:  # pragma: no cover - OpenCV is optional in some edge installs.
@@ -58,7 +60,7 @@ MAX_TILES = int(os.getenv("ROAD_AI_MAX_TILES", "6"))
 
 
 def get_model():
-    global _model, _model_load_ms, MODEL_PATH
+    global _model, _model_load_ms, MODEL_PATH, _waterlogging_model
 
     if YOLO is None:
         raise RuntimeError(
@@ -67,6 +69,11 @@ def get_model():
         )
 
     if _model is None:
+        # The dedicated waterlogging checkpoint is used sequentially later.
+        # Release it before loading the primary road checkpoint.
+        if _waterlogging_model is not None:
+            _waterlogging_model = None
+            collect_released_memory()
         if torch is not None:
             torch.set_num_threads(max(1, int(os.getenv("TORCH_NUM_THREADS", "1"))))
         if not MODEL_PATH.exists() and not PT_MODEL_PATH.exists():
@@ -88,7 +95,7 @@ def get_model():
 
 def get_waterlogging_model():
     """Load the dedicated trained waterlogging segmentation model."""
-    global _waterlogging_model
+    global _waterlogging_model, _model, _pretrained_pothole_model
 
     if YOLO is None:
         return None
@@ -97,6 +104,11 @@ def get_waterlogging_model():
         return None
 
     if _waterlogging_model is None:
+        # Primary/pothole inference is complete before this function runs.
+        # Keep only one YOLO checkpoint resident at a time.
+        _model = None
+        _pretrained_pothole_model = None
+        collect_released_memory()
         _waterlogging_model = YOLO(str(WATERLOGGING_MODEL_PATH))
 
     return _waterlogging_model
@@ -149,6 +161,14 @@ def warm_road_model():
                 raise
         _model_warmup_ms = round((time.perf_counter() - started) * 1000, 2)
     return model
+
+
+def release_road_models() -> None:
+    global _model, _waterlogging_model, _pretrained_pothole_model
+    _model = None
+    _waterlogging_model = None
+    _pretrained_pothole_model = None
+    collect_released_memory()
 
 
 def _collect_waterlogging_detections(
@@ -354,8 +374,14 @@ def _collect_tiled_detections(image_rgb, original_width, original_height, confid
     return _nms_by_class(detections, ROAD_NMS_IOU)
 
 
+@serialized_model_operation
 def detect_road_defects(raw: bytes, confidence: float = 0.12):
     global MODEL_PATH, _model
+    from .anpr_service import release_anpr_model
+    from .urban_vision import release_traffic_model
+
+    release_anpr_model()
+    release_traffic_model()
     request_started = time.perf_counter()
     decode_started = request_started
     try:
@@ -632,4 +658,3 @@ def road_model_health():
         "model_load_ms": _model_load_ms,
         "model_warmup_ms": _model_warmup_ms,
     }
-

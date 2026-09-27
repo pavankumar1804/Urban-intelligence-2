@@ -76,6 +76,9 @@ class ANPRProcessor:
         self.model = None
         self._track_cache: Dict[int, Tuple[float, PlateResult, List[str]]] = {}
         self._recognition_interval_seconds = float(os.getenv("ANPR_RECOGNITION_INTERVAL", "1.0"))
+        # EasyOCR creates another PyTorch neural network beside YOLO and can
+        # exceed small Render instance limits. It remains opt-in for larger
+        # deployments; production uses the lightweight Tesseract stage.
         self.use_easyocr = os.getenv("ANPR_USE_EASYOCR", "0").strip().lower() in {"1", "true", "yes"}
         self._tesseract_ready = False
         self.model_load_error = None
@@ -90,7 +93,6 @@ class ANPRProcessor:
                 try:
                     from ultralytics import YOLO
                     self.model = YOLO(str(p))
-                    self.use_easyocr = os.getenv("ANPR_USE_EASYOCR", "1").strip().lower() not in {"0", "false", "no"}
                     logger.info("ANPR YOLO plate detector loaded: %s (%s bytes)", p.resolve(), p.stat().st_size)
                 except Exception as exc:
                     self.model = None

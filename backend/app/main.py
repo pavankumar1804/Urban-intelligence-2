@@ -12,8 +12,6 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.services.road_detector import warm_road_model, MODEL_PATH
-
 from app.core.config import settings
 from app.core.security import get_current_user, require_write
 from app.db.session import init_db, close_db, async_session
@@ -53,19 +51,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✅ Database initialized")
 
-    # Load the road model during service startup instead of making the first
-    # uploaded scan pay the model initialization cost.
-    if MODEL_PATH.exists():
-        try:
-            warm_road_model()
-            logger.info(f"✅ Road AI warmed: {MODEL_PATH.name}")
-        except Exception as exc:
-            # Keep non-AI platform routes available if model initialization
-            # fails; /api/detect/health will expose readiness for diagnosis.
-            logger.warning(f"⚠️ Road AI warm-up failed: {exc}")
-
-    # Keep ANPR lazy-loaded. Loading a second ML/OCR stack at startup can
-    # exceed the RAM available on small Render instances.
+    # All ML models remain lazy-loaded. Render's small instances cannot safely
+    # retain the road detector while loading ANPR/OCR or traffic models.
     # Production safety checks
     if settings.APP_ENV == "production":
         if (

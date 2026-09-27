@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
+from .model_runtime import collect_released_memory, serialized_model_operation
+
 try:
     import cv2
 except ImportError:  # pragma: no cover - OpenCV is optional in lighter deploys.
@@ -99,6 +101,12 @@ def _get_traffic_model():
     return _traffic_model
 
 
+def release_traffic_model() -> None:
+    global _traffic_model
+    _traffic_model = None
+    collect_released_memory()
+
+
 def detection_health() -> dict[str, Any]:
     return {
         "traffic": _traffic_status(),
@@ -116,7 +124,13 @@ def detection_health() -> dict[str, Any]:
     }
 
 
+@serialized_model_operation
 def detect_traffic(raw: bytes, confidence: float = 0.25) -> dict[str, Any]:
+    from .anpr_service import release_anpr_model
+    from .road_detector import release_road_models
+
+    release_anpr_model()
+    release_road_models()
     started = time.perf_counter()
     decoded = _decode_image(raw)
     model = _get_traffic_model()

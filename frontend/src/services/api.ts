@@ -80,6 +80,9 @@ export async function request(path: string, options: RequestInit = {}) {
     } catch {
       // Keep the status-only fallback when the backend returns non-JSON.
     }
+    if (response.status === 429) {
+      throw new Error("AI service is restarting or busy. Wait about one minute, then scan once.");
+    }
     throw new Error(detail || `Request failed (${response.status})`);
   }
   return response;
