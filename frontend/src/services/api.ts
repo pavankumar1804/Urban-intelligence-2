@@ -114,17 +114,44 @@ export async function request(path: string, options: TimedRequestInit = {}) {
 }
 
 async function waitForDetectionBackend(): Promise<void> {
-  // Let one cold-start request finish so the upload can reuse a warm service.
-  // This avoids aborting the wake-up and immediately starting another cold
-  // connection with a much larger multipart body.
-  try {
-    await fetchWithTimeout(`${API_BASE}/health`, {
-      timeoutMs: 20000,
-      cache: "no-store",
-    });
-  } catch {
-    // Continue immediately. The POST below will return the real backend error.
+  // Render's free-service cold-start page is HTML with HTTP 200. Do not treat
+  // that interstitial as a healthy FastAPI response and immediately send a
+  // multipart inference request to an instance that is still booting.
+  const deadline = Date.now() + 55000;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetchWithTimeout(`${API_BASE}/health`, {
+        timeoutMs: 12000,
+        cache: "no-store",
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (response.ok && contentType.includes("application/json")) {
+        const payload = await response.json();
+        if (payload?.status === "ok") return;
+      }
+    } catch {
+      // A dropped probe is expected while Render is allocating the instance.
+    }
+
+    if (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
   }
+
+  throw new Error(
+    "Detection server is still starting. Please wait about 30 seconds and retry.",
+  );
+}
+
+async function parseDetectionJson<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      "Detection server returned its startup page instead of a result. Please retry once it is ready.",
+    );
+  }
+  return response.json() as Promise<T>;
 }
 export async function getEvidence(id: number) {
   const response = await request(`/events/${id}/evidence`);
@@ -848,7 +875,7 @@ export const apiClient = {
 
     const response = await runScan();
 
-    return response.json();
+    return parseDetectionJson<RoadDetectionResult>(response);
   },
   detectAnpr: async (file: File) => {
     await waitForDetectionBackend();
@@ -859,7 +886,7 @@ export const apiClient = {
       body: formData,
       timeoutMs: 90000,
     });
-    return response.json() as Promise<{
+    return parseDetectionJson<{
       plate_number: string;
       raw_ocr_text: string;
       plate_detection_confidence: number;
@@ -870,7 +897,7 @@ export const apiClient = {
       timestamp: string;
       mode: string;
       warning: string | null;
-    }>;
+    }>(response);
   },
   detectTraffic: async (file: File) => {
     await waitForDetectionBackend();

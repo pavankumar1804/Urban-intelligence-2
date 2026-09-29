@@ -160,8 +160,16 @@ def recognize_plate(raw: bytes):
         raise ValueError("Invalid image")
 
     decode_ms = (time.perf_counter() - decode_started) * 1000
+    logger.info("IMAGE_DECODED endpoint=anpr duration_ms=%.2f", decode_ms)
     processor = get_processor()
     detector_ready = bool(WEIGHTS and processor.model is not None)
+    logger.info(
+        "MODEL_READY endpoint=anpr engine=%s weight=%s ready=%s load_ms=%s",
+        "onnxruntime" if WEIGHTS and WEIGHTS.suffix == ".onnx" else "pytorch",
+        WEIGHTS.name if WEIGHTS else None,
+        detector_ready,
+        _processor_load_ms,
+    )
     result = processor.process_vehicle_crop(0, frame, use_temporal_cache=False)
 
     if not detector_ready:

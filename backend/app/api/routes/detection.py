@@ -97,6 +97,7 @@ async def detect_road(
 ):
     backend_started = datetime.now(timezone.utc)
     upload_started = time.perf_counter()
+    logger.info("REQUEST_RECEIVED endpoint=road")
     if confidence < 0.01 or confidence > 1.0:
         raise HTTPException(
             status_code=400,
@@ -106,6 +107,7 @@ async def detect_road(
     raw = await file.read(MAX_FILE_SIZE + 1)
     await file.close()
     upload_read_ms = round((time.perf_counter() - upload_started) * 1000, 2)
+    logger.info("UPLOAD_READ endpoint=road bytes={} duration_ms={}", len(raw), upload_read_ms)
 
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -113,23 +115,32 @@ async def detect_road(
         raise HTTPException(status_code=413, detail="Image exceeds 5 MB")
 
     try:
+        logger.info("INFERENCE_STARTED endpoint=road")
         detections, timing = await run_in_threadpool(
             detect_road_defects,
             raw,
             confidence,
         )
         detections = _prefer_model_over_water_heuristic(detections)
-    except ValueError:
+        logger.info(
+            "INFERENCE_COMPLETED endpoint=road detections={} duration_ms={}",
+            len(detections),
+            timing.get("total_ms"),
+        )
+    except ValueError as exc:
+        logger.warning("REQUEST_FAILED endpoint=road error_type=ValueError error={}", exc)
         raise HTTPException(status_code=422, detail="Upload a valid image")
     except FileNotFoundError as exc:
+        logger.error("REQUEST_FAILED endpoint=road error_type=FileNotFoundError error={}", exc)
         raise HTTPException(status_code=503, detail=str(exc))
     except RuntimeError as exc:
+        logger.error("REQUEST_FAILED endpoint=road error_type=RuntimeError error={}", exc)
         raise HTTPException(status_code=503, detail=str(exc))
-    except Exception:
-        logger.exception("Road AI inference failed")
+    except Exception as exc:
+        logger.exception("REQUEST_FAILED endpoint=road error_type={} error={}", type(exc).__name__, exc)
         raise HTTPException(status_code=500, detail="Road AI inference failed")
 
-    return {
+    response = {
         "model": road_model_health()["weight"],
         "detection_count": len(detections),
         "detections": detections,
@@ -146,6 +157,8 @@ async def detect_road(
         "requires_manual_verification": True,
         "status": "CUSTOM TRAINED / FIELD VALIDATION REQUIRED",
     }
+    logger.info("RESPONSE_SENT endpoint=road status=200 detections={}", len(detections))
+    return response
 
 
 @router.post("/anpr")
@@ -153,25 +166,35 @@ async def detect_anpr(file: UploadFile = File(...)):
     """Prototype ANPR endpoint. Never fabricates a plate when OCR is uncertain."""
     backend_started = datetime.now(timezone.utc)
     upload_started = time.perf_counter()
+    logger.info("REQUEST_RECEIVED endpoint=anpr")
     raw = await file.read(MAX_FILE_SIZE + 1)
     await file.close()
     upload_read_ms = round((time.perf_counter() - upload_started) * 1000, 2)
+    logger.info("UPLOAD_READ endpoint=anpr bytes={} duration_ms={}", len(raw), upload_read_ms)
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(raw) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Image exceeds 5 MB")
     try:
+        logger.info("INFERENCE_STARTED endpoint=anpr")
         result = await run_in_threadpool(recognize_plate, raw)
         result["timing"]["upload_read_ms"] = upload_read_ms
         result["timing"]["backend_request_ms"] = round(
             (datetime.now(timezone.utc) - backend_started).total_seconds() * 1000,
             2,
         )
+        logger.info(
+            "INFERENCE_COMPLETED endpoint=anpr status={} duration_ms={}",
+            result.get("anpr_status"),
+            result["timing"].get("total_ms"),
+        )
+        logger.info("RESPONSE_SENT endpoint=anpr status=200")
         return result
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("REQUEST_FAILED endpoint=anpr error_type=ValueError error={}", exc)
         raise HTTPException(status_code=422, detail="Upload a valid vehicle/plate image")
-    except Exception:
-        logger.exception("ANPR inference failed")
+    except Exception as exc:
+        logger.exception("REQUEST_FAILED endpoint=anpr error_type={} error={}", type(exc).__name__, exc)
         raise HTTPException(status_code=500, detail="ANPR inference failed")
 
 

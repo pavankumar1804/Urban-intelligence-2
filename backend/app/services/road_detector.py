@@ -7,6 +7,7 @@ import time
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
+from loguru import logger
 
 from .model_runtime import collect_released_memory, current_rss_mb, serialized_model_operation
 from .onnx_yolo import ONNXYOLODetector
@@ -472,6 +473,12 @@ def detect_road_defects(raw: bytes, confidence: float = 0.12):
         raise ValueError("Invalid image")
 
     decode_ms = (time.perf_counter() - decode_started) * 1000
+    logger.info(
+        "IMAGE_DECODED endpoint=road width={} height={} duration_ms={:.2f}",
+        original_width,
+        original_height,
+        decode_ms,
+    )
     preprocess_started = time.perf_counter()
     decoded_image.thumbnail((INFERENCE_SIZE, INFERENCE_SIZE))
     if tile_image is not None:
@@ -486,6 +493,12 @@ def detect_road_defects(raw: bytes, confidence: float = 0.12):
     model_started = time.perf_counter()
     get_model()
     model_ready_ms = (time.perf_counter() - model_started) * 1000
+    logger.info(
+        "MODEL_READY endpoint=road engine={} weight={} duration_ms={:.2f}",
+        "onnxruntime" if MODEL_PATH.suffix == ".onnx" else "pytorch",
+        MODEL_PATH.name,
+        model_ready_ms,
+    )
 
     inference_started = time.perf_counter()
     detections = _collect_road_model_detections(frame, scale_x, scale_y, confidence)
