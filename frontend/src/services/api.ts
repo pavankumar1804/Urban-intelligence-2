@@ -36,6 +36,13 @@ export const logout = () => {
 
 type TimedRequestInit = RequestInit & { timeoutMs?: number };
 
+// Render free instances have taken 60-75 seconds to answer the first health
+// request in production. Keep the wake-up bounded, but do not abort it before
+// the instance has had a realistic chance to finish starting.
+const DETECTION_WAKE_TIMEOUT_MS = 90000;
+const ROAD_INFERENCE_TIMEOUT_MS = 90000;
+const ANPR_INFERENCE_TIMEOUT_MS = 120000;
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   options: TimedRequestInit = {},
@@ -114,34 +121,46 @@ export async function request(path: string, options: TimedRequestInit = {}) {
 }
 
 async function waitForDetectionBackend(): Promise<void> {
-  // Render's free-service cold-start page is HTML with HTTP 200. Do not treat
-  // that interstitial as a healthy FastAPI response and immediately send a
-  // multipart inference request to an instance that is still booting.
-  const deadline = Date.now() + 55000;
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetchWithTimeout(`${API_BASE}/health`, {
-        timeoutMs: 12000,
-        cache: "no-store",
-      });
-      const contentType = response.headers.get("content-type") || "";
-      if (response.ok && contentType.includes("application/json")) {
-        const payload = await response.json();
-        if (payload?.status === "ok") return;
-      }
-    } catch {
-      // A dropped probe is expected while Render is allocating the instance.
+  // Use one uninterrupted probe. Repeated 12-second AbortController probes
+  // raced Render's cold start and the old 55-second deadline expired before
+  // production's observed 60-75 second startup completed.
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${API_BASE}/health`, {
+      timeoutMs: DETECTION_WAKE_TIMEOUT_MS,
+      cache: "no-store",
+    });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new Error(
+        "Detection server did not become ready within 90 seconds. Please retry.",
+      );
     }
-
-    if (Date.now() < deadline) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    }
+    throw new Error("Unable to reach detection server. Please try again.");
   }
 
-  throw new Error(
-    "Detection server is still starting. Please wait about 30 seconds and retry.",
-  );
+  if (!response.ok) {
+    throw new Error(
+      `Detection server health check failed (HTTP ${response.status}). Please retry.`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      "Detection server is still starting. Please wait briefly and retry.",
+    );
+  }
+
+  try {
+    const payload = await response.json();
+    if (payload?.status === "ok") return;
+  } catch {
+    throw new Error("Detection server returned an invalid health response.");
+  }
+
+  throw new Error("Detection server is not ready. Please try again.");
 }
 
 async function parseDetectionJson<T>(response: Response): Promise<T> {
@@ -869,7 +888,7 @@ export const apiClient = {
         body: formData,
         // Render may cold-start before CPU inference begins. Bound the wait,
         // but leave enough time for one sequential scan and never auto-retry.
-        timeoutMs: 60000,
+        timeoutMs: ROAD_INFERENCE_TIMEOUT_MS,
       });
     };
 
@@ -884,7 +903,7 @@ export const apiClient = {
     const response = await request("/detect/anpr", {
       method: "POST",
       body: formData,
-      timeoutMs: 90000,
+      timeoutMs: ANPR_INFERENCE_TIMEOUT_MS,
     });
     return parseDetectionJson<{
       plate_number: string;
